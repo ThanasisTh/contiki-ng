@@ -249,7 +249,7 @@ uint64_t tsch_get_network_uptime_ticks(void);
 /**
   * Leave the TSCH network we are currently in
   */
-void tsch_disassociate(void);
+void tsch_disassociate(struct rtimer *t);
 
 #endif /* __TSCH_H__ */
 /** @} */

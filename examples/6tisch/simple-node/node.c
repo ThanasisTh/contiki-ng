@@ -72,9 +72,12 @@ PROCESS_THREAD(node_process, ev, data)
 #if WITH_PERIODIC_ROUTES_PRINT
   {
     static struct etimer et;
+    static struct etimer periodic_timer_aux;
     /* Print out routing tables every minute */
     etimer_set(&et, CLOCK_SECOND * 60);
+    etimer_set(&periodic_timer_aux, 2*CLOCK_SECOND);     
     while(1) {
+      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&periodic_timer_aux) );
       /* Used for non-regression testing */
       #if (UIP_MAX_ROUTES != 0)
         PRINTF("Routing entries: %u\n", uip_ds6_route_num_routes());
@@ -84,6 +87,7 @@ PROCESS_THREAD(node_process, ev, data)
       #endif
       PROCESS_YIELD_UNTIL(etimer_expired(&et));
       etimer_reset(&et);
+      etimer_reset(&periodic_timer_aux);
     }
   }
 #endif /* WITH_PERIODIC_ROUTES_PRINT */

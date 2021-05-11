@@ -262,7 +262,7 @@ resynchronize(const linkaddr_t *original_time_source_addr)
     LOG_WARN("not able to re-synchronize, received no EB from other neighbors\n");
     if(sync_count == 0) {
       /* We got no synchronization at all in this session, leave the network */
-      tsch_disassociate();
+      tsch_disassociate(NULL);
     }
     return 0;
   } else {
@@ -446,14 +446,14 @@ eb_input(struct input_packet *current_input)
       if(asn_diff != 0) {
         /* We disagree with our time source's ASN -- leave the network */
         LOG_WARN("! ASN drifted by %ld, leaving the network\n", asn_diff);
-        tsch_disassociate();
+        tsch_disassociate(NULL);
       }
 
       if(eb_ies.ie_join_priority >= TSCH_MAX_JOIN_PRIORITY) {
         /* Join priority unacceptable. Leave network. */
         LOG_WARN("! EB JP too high %u, leaving the network\n",
                eb_ies.ie_join_priority);
-        tsch_disassociate();
+        tsch_disassociate(NULL);
       } else {
 #if TSCH_AUTOSELECT_TIME_SOURCE
         /* Update join priority */
@@ -568,7 +568,7 @@ tsch_start_coordinator(void)
 /*---------------------------------------------------------------------------*/
 /* Leave the TSCH network */
 void
-tsch_disassociate(void)
+tsch_disassociate(struct rtimer *t)
 {
   if(tsch_is_associated == 1) {
     tsch_is_associated = 0;

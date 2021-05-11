@@ -20,8 +20,10 @@ if not os.path.isdir(file_dir):
     os.mkdir(stats_dir)
     
 seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
-algorithms = ['default', 'calculate_channel']
-schedules = ['orchestra']
+# seeds = [0, 123456, 127]
+# algorithms = ['default', 'calculate_channel']
+algorithms = ['calculate_channel', 'default']
+schedules = ['minimal']
 # schedules = ['minimal', 'orchestra']
 # guard_times = [1100, 2200, 3300]
 
@@ -52,4 +54,4 @@ for schedule in schedules:
             shutil.copy(contiki_dir + "COOJA.testlog", file_dir + "seed:" + str(seed) + "/" + schedule +
                         "/6-star-seed:" + str(seed) + "-" + algorithm + "-" + schedule + ".testlog")   
             
-            time.sleep(5) 
+            time.sleep(1) 
