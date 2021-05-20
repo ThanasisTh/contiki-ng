@@ -157,7 +157,6 @@ static clock_time_t tsch_current_ka_timeout;
 
 /* have we joined and left a network? */
 bool left_network = false;
-bool asn_tracker_started = false;
 unsigned long last_received_eb = 0;
 static int32_t drift_correction = 0;
 static rtimer_clock_t volatile current_asn_start;
@@ -688,14 +687,12 @@ void
 tsch_disassociate(struct rtimer *t)
 {
   if(tsch_is_associated == 1) {
-    LOG_INFO("got into disassociate if\n");
     tsch_is_associated = 0;
     tsch_adaptive_timesync_reset();
     
-    // TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
+    TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
     left_network = true;
     if(t != NULL) {
-      asn_tracker_started = true;
       struct tsch_link *backup_link = NULL;
       static rtimer_clock_t prev_slot_start;
       static rtimer_clock_t time_to_next_active_slot;
@@ -974,9 +971,6 @@ PT_THREAD(tsch_scan(struct pt *pt))
     if(current_channel == 0 || now_time - current_channel_since > TSCH_CHANNEL_SCAN_DURATION) {
       /* Pick a channel at random in TSCH_JOIN_HOPPING_SEQUENCE */
 
-      if(!asn_tracker_started) {
-        TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
-      }
       if(left_network && tsch_next_asn.ls4b > tsch_current_asn.ls4b && next_eb_in > 1) {
 
         next_eb_in--;

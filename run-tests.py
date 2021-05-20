@@ -19,8 +19,9 @@ if not os.path.isdir(file_dir):
     os.mkdir(file_dir)
     os.mkdir(stats_dir)
     
+seeds = []
 # seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
-seeds = [715, 5874, 8128, 42069, 67234, 80085, 84123, 98989, 99999, 933933]
+seeds.append([715, 5874, 8128, 42069, 67234, 80085, 84123, 98989, 99999, 933933])
 # seeds = [123456]
 algorithms = ['calculate_channel']
 # algorithms = ['calculate_channel', 'default']
