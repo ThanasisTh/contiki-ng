@@ -19,10 +19,11 @@ if not os.path.isdir(file_dir):
     os.mkdir(file_dir)
     os.mkdir(stats_dir)
     
-seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
-# seeds = [0, 123456, 127]
-# algorithms = ['default', 'calculate_channel']
-algorithms = ['calculate_channel', 'default']
+# seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
+seeds = [715, 5874, 8128, 42069, 67234, 80085, 84123, 98989, 99999, 933933]
+# seeds = [123456]
+algorithms = ['calculate_channel']
+# algorithms = ['calculate_channel', 'default']
 schedules = ['minimal']
 # schedules = ['minimal', 'orchestra']
 # guard_times = [1100, 2200, 3300]
@@ -47,6 +48,9 @@ for schedule in schedules:
                 os.mkdir(file_dir + "/seed:" + str(seed) + "/")
             if not os.path.isdir(file_dir + "seed:" + str(seed) + "/" + schedule):
                 os.mkdir(file_dir + "/seed:" + str(seed) + "/" + schedule + "/")
+            else:
+                delete_previous_results = "find " + file_dir + " -name 'Best result*' -type f -delete"
+                os.system(delete_previous_results)
 
             print("\n ########### Now running simulation with algorithm " + algorithm + ", schedule: " + schedule + " and random seed: " + str(seed) + " ##############\n")
             command = "java -jar ~/contiki-ng/tools/cooja/dist/cooja.jar -nogui=examples/6tisch/simple-node/rpl-tsch-cooja-6-star.csc -random-seed={}".format(seed)

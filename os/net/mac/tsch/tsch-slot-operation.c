@@ -76,6 +76,9 @@
 #define TSCH_DEBUG_SLOT_END()
 #endif
 
+#define LOG_MODULE "TSCH"
+#define LOG_LEVEL LOG_LEVEL_MAC
+
 /* Check if TSCH_MAX_INCOMING_PACKETS is power of two */
 #if (TSCH_MAX_INCOMING_PACKETS & (TSCH_MAX_INCOMING_PACKETS - 1)) != 0
 #error TSCH_MAX_INCOMING_PACKETS must be power of two
@@ -1108,7 +1111,7 @@ PT_THREAD(tsch_slot_operation(struct rtimer *t, void *ptr))
                 "! leaving the network, last sync %u",
                           (unsigned)TSCH_ASN_DIFF(tsch_current_asn, last_sync_asn));
       );
-      tsch_disassociate();
+      tsch_disassociate(t);
     } else {
       /* backup of drift correction for printing debug messages */
       /* int32_t drift_correction_backup = drift_correction; */

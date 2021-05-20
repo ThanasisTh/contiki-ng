@@ -640,6 +640,7 @@ tsch_schedule_inc_asn(struct rtimer *t, rtimer_clock_t ref_time, rtimer_clock_t 
       return 1;
     }
   }
+  // LOG_INFO("dl-miss %s | now: %u, current_asn_start: %u | missed: %d\n", str, now, current_asn_start, missed);
   /* block until the time to schedule comes */
   RTIMER_BUSYWAIT_UNTIL_ABS(0, ref_time, offset);
   return 0;
@@ -651,11 +652,11 @@ PT_THREAD(tsch_asn_inc_operation(struct rtimer *t, void *ptr)) {
 
   PT_BEGIN(&asn_inc_operation_pt);
 
+  struct tsch_link *backup_link = NULL;
+  static rtimer_clock_t prev_slot_start;
+  static rtimer_clock_t time_to_next_active_slot;
+  uint16_t timeslot_diff = 0;
   while(!tsch_is_associated) {
-    struct tsch_link *backup_link = NULL;
-    static rtimer_clock_t prev_slot_start;
-    static rtimer_clock_t time_to_next_active_slot;
-    uint16_t timeslot_diff = 0;
     do {
       current_link = tsch_schedule_get_next_active_link(&tsch_current_asn, &timeslot_diff, &backup_link);
       if(current_link == NULL) {
@@ -671,7 +672,7 @@ PT_THREAD(tsch_asn_inc_operation(struct rtimer *t, void *ptr)) {
       drift_correction = 0;
       prev_slot_start = current_asn_start;
       current_asn_start += time_to_next_active_slot;
-    } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot - RTIMER_GUARD, "asn_inc_operation") && !tsch_is_associated);
+    } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot, "asn_inc_operation") && !tsch_is_associated);
     PT_YIELD(&asn_inc_operation_pt);
     RTIMER_BUSYWAIT_UNTIL_ABS(0, prev_slot_start, time_to_next_active_slot);
   }
@@ -687,9 +688,11 @@ void
 tsch_disassociate(struct rtimer *t)
 {
   if(tsch_is_associated == 1) {
+    LOG_INFO("got into disassociate if\n");
     tsch_is_associated = 0;
     tsch_adaptive_timesync_reset();
     
+    // TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
     left_network = true;
     if(t != NULL) {
       asn_tracker_started = true;
@@ -711,8 +714,7 @@ tsch_disassociate(struct rtimer *t)
         time_to_next_active_slot += tsch_timesync_adaptive_compensate(time_to_next_active_slot);
         prev_slot_start = current_asn_start;
         current_asn_start += time_to_next_active_slot;
-      } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot - RTIMER_GUARD, "disassoc") && !tsch_is_associated);
-      // RTIMER_BUSYWAIT_UNTIL_ABS(0, prev_slot_start, time_to_next_active_slot);
+      } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot, "disassoc") && !tsch_is_associated);
     }
 
     process_poll(&tsch_process);
@@ -736,6 +738,7 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
   }
 
   tsch_current_asn = ies.ie_asn;
+  // LOG_INFO("received asn: %02x.%08lx \n", tsch_current_asn.ms1b, tsch_current_asn.ls4b);
   tsch_join_priority = ies.ie_join_priority + 1;
 
 #if TSCH_JOIN_SECURED_ONLY
@@ -856,6 +859,7 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
       frame802154_set_pan_id(frame.src_pid);
 
       /* Synchronize on EB */
+      tsch_current_asn = ies.ie_asn;
       tsch_slot_operation_sync(timestamp - tsch_timing[tsch_ts_tx_offset], &tsch_current_asn);
 
       /* Update global flags */
@@ -989,7 +993,7 @@ PT_THREAD(tsch_scan(struct pt *pt))
         // TSCH_ASN_INC(tsch_current_asn, timeslot_diff); 
         // current_asn_since = now_time;
 
-        TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b);
+        // TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b);
         TSCH_ASN_INC(tsch_next_asn, next_eb_in*TSCH_SLOTS_PER_SECOND);
         
         scan_channel = tsch_calculate_channel(&tsch_next_asn, 0);
