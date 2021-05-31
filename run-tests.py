@@ -19,9 +19,11 @@ if not os.path.isdir(file_dir):
     os.mkdir(file_dir)
     os.mkdir(stats_dir)
     
-seeds = []
-# seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
-seeds.append([715, 5874, 8128, 42069, 67234, 80085, 84123, 98989, 99999, 933933])
+# seeds = []
+seeds = [0, 1, 10, 20, 35, 127, 304, 856, 1000, 123456]
+seeds += [715, 5874, 8128, 42069, 67234, 80085, 84123, 98989, 99999, 933933]
+seeds += [222, 420, 5234, 6969, 7945]
+seeds.sort()
 # seeds = [123456]
 algorithms = ['calculate_channel']
 # algorithms = ['calculate_channel', 'default']
@@ -38,7 +40,7 @@ for schedule in schedules:
 
     for algorithm in algorithms:
 
-        # clean previous mote built and replace tsch.c with algorithm
+        # clean previous mote built and replace tsch.c with algorithm (not needed because cooja cleans the build on its own now)
         # if os.path.isdir(build_dir):
         #     shutil.rmtree(build_dir)
         # os.remove(tsch_dir + 'tsch.c')
