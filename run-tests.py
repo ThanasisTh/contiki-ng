@@ -62,3 +62,4 @@ for schedule in schedules:
                         "/6-star-seed:" + str(seed) + "-" + algorithm + "-" + schedule + ".testlog")   
             
             time.sleep(1) 
+            
