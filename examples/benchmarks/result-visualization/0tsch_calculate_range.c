@@ -684,7 +684,7 @@ PT_THREAD(tsch_asn_inc_operation(struct rtimer *t, void *ptr)) {
 }
 
 /*---------------------------------------------------------------------------*/
-/* Leave the TSCH network but keep increasing ASN*/
+/* Leave the TSCH network */
 void
 tsch_disassociate(struct rtimer *t)
 {
@@ -899,38 +899,38 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
 }
 /* Processes and protothreads used by TSCH */
 
-static uint8_t
-tsch_calculate_channel(struct tsch_asn_t *asn, uint16_t channel_offset)
-{
-  uint16_t index_of_0, index_of_offset;
-  index_of_0 = TSCH_ASN_MOD(*asn, tsch_hopping_sequence_length);
-  index_of_offset = (index_of_0 + channel_offset) % tsch_hopping_sequence_length.val;
-  return tsch_hopping_sequence[index_of_offset];
-}
-
-// static uint8_t *
-// tsch_calculate_channel_range(struct tsch_asn_t *asn, uint16_t channel_offset)
+// static uint8_t
+// tsch_calculate_channel(struct tsch_asn_t *asn, uint16_t channel_offset)
 // {
 //   uint16_t index_of_0, index_of_offset;
-//   static uint8_t subseq[TSCH_HOPPING_SUBSEQUENCE_LEN];
 //   index_of_0 = TSCH_ASN_MOD(*asn, tsch_hopping_sequence_length);
 //   index_of_offset = (index_of_0 + channel_offset) % tsch_hopping_sequence_length.val;
-//   uint16_t i = 0;
-//   uint16_t cursor;
-//   if(TSCH_HOPPING_SUBSEQUENCE_LEN/2 > index_of_offset) {
-//     cursor = tsch_hopping_sequence_length.val-1-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
-//   } else {
-//     cursor = index_of_offset-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
-//   }
-//   for(i=0; i<TSCH_HOPPING_SUBSEQUENCE_LEN; i++) {
-//     subseq[i] = tsch_hopping_sequence[cursor];
-//     cursor++;
-//     if(cursor == tsch_hopping_sequence_length.val-1) {
-//       cursor = 0;
-//     }
-//   }
-//   return subseq;
+//   return tsch_hopping_sequence[index_of_offset];
 // }
+
+static uint8_t *
+tsch_calculate_channel_range(struct tsch_asn_t *asn, uint16_t channel_offset)
+{
+  uint16_t index_of_0, index_of_offset;
+  static uint8_t subseq[TSCH_HOPPING_SUBSEQUENCE_LEN];
+  index_of_0 = TSCH_ASN_MOD(*asn, tsch_hopping_sequence_length);
+  index_of_offset = (index_of_0 + channel_offset) % tsch_hopping_sequence_length.val;
+  uint16_t i = 0;
+  uint16_t cursor;
+  if(TSCH_HOPPING_SUBSEQUENCE_LEN/2 > index_of_offset) {
+    cursor = tsch_hopping_sequence_length.val-1-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
+  } else {
+    cursor = index_of_offset-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
+  }
+  for(i=0; i<TSCH_HOPPING_SUBSEQUENCE_LEN; i++) {
+    subseq[i] = tsch_hopping_sequence[cursor];
+    cursor++;
+    if(cursor == tsch_hopping_sequence_length.val-1) {
+      cursor = 0;
+    }
+  }
+  return subseq;
+}
 
 static void 
 tsch_log_asn() {
@@ -961,7 +961,7 @@ PT_THREAD(tsch_scan(struct pt *pt))
     TSCH_ASN_INIT(tsch_current_asn, 0, 0);
   }
 
-  // static uint8_t *subseq;
+  static uint8_t *subseq;
 
   static struct tsch_asn_t tsch_next_asn;
   TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b);
@@ -999,7 +999,7 @@ PT_THREAD(tsch_scan(struct pt *pt))
       if(left_network && tsch_next_asn.ls4b <= tsch_current_asn.ls4b) {
         TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b); 
 
-        TSCH_ASN_INC(tsch_next_asn, next_eb_in*TSCH_SLOTS_PER_SECOND); //single channel -> 14vs11, channel range ->  17vs8
+        TSCH_ASN_INC(tsch_next_asn, average_eb_period*TSCH_SLOTS_PER_SECOND); //single channel -> 14vs11, channel range ->  17vs8
         
         //single channel -> 13vs12, channel range -> 17vs8 with timeslot_diff
         // TSCH_ASN_INC(tsch_next_asn, average_eb_period*TSCH_SLOTS_PER_SECOND-TSCH_SLOTS_PER_SECOND%tsch_hopping_sequence_length.val);
@@ -1010,10 +1010,10 @@ PT_THREAD(tsch_scan(struct pt *pt))
         LOG_INFO("current asn: %02x.%08lx - next asn: %02x.%08lx | sf_length: %u, next_sf: %u\n", tsch_current_asn.ms1b, tsch_current_asn.ls4b, 
               tsch_next_asn.ms1b, tsch_next_asn.ls4b, tsch_schedule_slotframe_head()->size.val, tsch_schedule_slotframe_head()->next->handle);
 
-        scan_channel = tsch_calculate_channel(&tsch_next_asn, 0); 
+        // scan_channel = tsch_calculate_channel(&tsch_next_asn, 0); 
           
-        // subseq = tsch_calculate_channel_range(&tsch_next_asn, 0); 
-        // scan_channel = subseq[random_rand() % TSCH_HOPPING_SUBSEQUENCE_LEN];
+        subseq = tsch_calculate_channel_range(&tsch_next_asn, 0); 
+        scan_channel = subseq[random_rand() % TSCH_HOPPING_SUBSEQUENCE_LEN];
       } 
       else if(!left_network) {
         TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);

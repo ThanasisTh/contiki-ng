@@ -57,7 +57,6 @@
 #include "net/mac/mac-sequence.h"
 #include "lib/random.h"
 #include "net/routing/routing.h"
-// #include "net/mac/tsch/tsch-slot-operation.h"
 
 #if TSCH_WITH_SIXTOP
 #include "net/mac/tsch/sixtop/sixtop.h"
@@ -71,28 +70,6 @@
 #include "sys/log.h"
 #define LOG_MODULE "TSCH"
 #define LOG_LEVEL LOG_LEVEL_MAC
-
-#if RTIMER_SECOND < (32 * 1024)
-#error "TSCH: RTIMER_SECOND < (32 * 1024)"
-#endif
-#if CONTIKI_TARGET_COOJA
-/* Use 0 usec guard time for Cooja Mote with a 1 MHz Rtimer*/
-#define RTIMER_GUARD 0u
-#elif RTIMER_SECOND >= 200000
-#define RTIMER_GUARD (RTIMER_SECOND / 100000)
-#else
-#define RTIMER_GUARD 2u
-#endif
-
-#define TSCH_HOPPING_SUBSEQUENCE_LEN 3
-
-#define TSCH_SCHEDULE_AND_YIELD(pt, tm, ref_time, offset, str) \
-  do { \
-    if(tsch_schedule_inc_asn(tm, ref_time, offset - RTIMER_GUARD, str)) { \
-      PT_YIELD(pt); \
-      RTIMER_BUSYWAIT_UNTIL_ABS(0, ref_time, offset); \
-    } \
-  } while(0);
 
 /* The address of the last node we received an EB from (other than our time source).
  * Used for recovery */
@@ -156,14 +133,6 @@ static clock_time_t tsch_current_eb_period;
 /* Current period for keepalive output */
 static clock_time_t tsch_current_ka_timeout;
 
-
-/* have we joined and left a network? */
-bool left_network = false;
-unsigned long last_received_eb = 0;
-static int32_t drift_correction = 0;
-static rtimer_clock_t volatile current_asn_start;
-
-
 /* For scheduling keepalive messages  */
 enum tsch_keepalive_status {
   KEEPALIVE_SCHEDULING_UNCHANGED,
@@ -176,8 +145,6 @@ static volatile enum tsch_keepalive_status keepalive_status;
 /* timer for sending keepalive messages */
 static struct ctimer keepalive_timer;
 
-static struct ctimer log_asn_timer;
-
 /* Statistics on the current session */
 unsigned long tx_count;
 unsigned long rx_count;
@@ -187,8 +154,6 @@ int32_t max_drift_seen;
 
 /* TSCH processes and protothreads */
 PT_THREAD(tsch_scan(struct pt *pt));
-static PT_THREAD(tsch_asn_inc_operation(struct rtimer *t, void *ptr));
-static struct pt asn_inc_operation_pt;
 PROCESS(tsch_process, "main process");
 PROCESS(tsch_send_eb_process, "send EB process");
 PROCESS(tsch_pending_events_process, "pending events process");
@@ -248,9 +213,7 @@ tsch_reset(void)
   tsch_queue_update_time_source(NULL);
   /* Initialize global variables */
   tsch_join_priority = 0xff;
-  if(!left_network) {
-    TSCH_ASN_INIT(tsch_current_asn, 0, 0);
-  }
+  TSCH_ASN_INIT(tsch_current_asn, 0, 0);
   current_link = NULL;
   /* Reset timeslot timing to defaults */
   tsch_default_timing_us = TSCH_DEFAULT_TIMESLOT_TIMING;
@@ -424,7 +387,7 @@ tsch_keepalive_process_pending(void)
 static void
 eb_input(struct input_packet *current_input)
 {
-  LOG_INFO("EB received\n"); 
+  /* LOG_INFO("EB received\n"); */
   frame802154_t frame;
   /* Verify incoming EB (does its ASN match our Rx time?),
    * and update our join priority. */
@@ -549,7 +512,6 @@ tsch_rx_process_pending()
       packet_input();
     } else if(is_eb) {
       eb_input(current_input);
-      last_received_eb = clock_seconds();
     }
 
     /* Remove input from ringbuf */
@@ -603,120 +565,14 @@ tsch_start_coordinator(void)
   /* Start slot operation */
   tsch_slot_operation_sync(RTIMER_NOW(), &tsch_current_asn);
 }
-
-static uint8_t
-check_timer_miss(rtimer_clock_t ref_time, rtimer_clock_t offset, rtimer_clock_t now)
-{
-  rtimer_clock_t target = ref_time + offset;
-  int now_has_overflowed = now < ref_time;
-  int target_has_overflowed = target < ref_time;
-
-  if(now_has_overflowed == target_has_overflowed) {
-    /* Both or none have overflowed, just compare now to the target */
-    return target <= now;
-  } else {
-    /* Either now or target of overflowed.
-     * If it is now, then it has passed the target.
-     * If it is target, then we haven't reached it yet.
-     *  */
-    return now_has_overflowed;
-  }
-}
-
-static uint8_t
-tsch_schedule_inc_asn(struct rtimer *t, rtimer_clock_t ref_time, rtimer_clock_t offset, const char *str) {
-  rtimer_clock_t now = RTIMER_NOW();
-  int r;
-  int missed = check_timer_miss(ref_time, offset - RTIMER_GUARD, now);
-
-  if(missed) {
-    TSCH_LOG_ADD(tsch_log_message,
-                snprintf(log->message, sizeof(log->message),
-                    "!dl-miss %s %d %d",
-                        str, (int)(now-ref_time), (int)offset);
-    );
-  } else {
-    r = rtimer_set(t, ref_time + offset, 1, (void (*)(struct rtimer *, void *))tsch_asn_inc_operation, NULL);
-    if(r == RTIMER_OK) {
-      return 1;
-    }
-  }
-  // LOG_INFO("dl-miss %s | now: %u, current_asn_start: %u | missed: %d\n", str, now, current_asn_start, missed);
-  /* block until the time to schedule comes */
-  RTIMER_BUSYWAIT_UNTIL_ABS(0, ref_time, offset);
-  return 0;
-}
-
-
-static 
-PT_THREAD(tsch_asn_inc_operation(struct rtimer *t, void *ptr)) {
-
-  PT_BEGIN(&asn_inc_operation_pt);
-
-  struct tsch_link *backup_link = NULL;
-  static rtimer_clock_t prev_slot_start;
-  static rtimer_clock_t time_to_next_active_slot;
-  uint16_t timeslot_diff = 0;
-  while(!tsch_is_associated) {
-    do {
-      current_link = tsch_schedule_get_next_active_link(&tsch_current_asn, &timeslot_diff, &backup_link);
-      if(current_link == NULL) {
-        /* There is no next link. Fall back to default
-          * behavior: wake up at the next slot. */
-        timeslot_diff = 1;
-      } 
-      /* Update ASN */
-      TSCH_ASN_INC(tsch_current_asn, timeslot_diff);
-      /* Time to next wake up */
-      time_to_next_active_slot = timeslot_diff * tsch_timing[tsch_ts_timeslot_length] + drift_correction;
-      time_to_next_active_slot += tsch_timesync_adaptive_compensate(time_to_next_active_slot);
-      drift_correction = 0;
-      prev_slot_start = current_asn_start;
-      current_asn_start += time_to_next_active_slot;
-    } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot, "asn_inc_operation") && !tsch_is_associated);
-    PT_YIELD(&asn_inc_operation_pt);
-    RTIMER_BUSYWAIT_UNTIL_ABS(0, prev_slot_start, time_to_next_active_slot);
-  }
-
-  // TSCH_SCHEDULE_AND_YIELD(&asn_inc_operation_pt, t, current_asn_start, tsch_timing[tsch_ts_tx_offset] - RTIMER_GUARD, "asn_inc_operation");
-
-  PT_END(&asn_inc_operation_pt);
-}
-
 /*---------------------------------------------------------------------------*/
-/* Leave the TSCH network but keep increasing ASN*/
+/* Leave the TSCH network */
 void
 tsch_disassociate(struct rtimer *t)
 {
   if(tsch_is_associated == 1) {
     tsch_is_associated = 0;
     tsch_adaptive_timesync_reset();
-    current_asn_start = RTIMER_NOW();
-    
-    // TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
-    left_network = true;
-    if(t != NULL) {
-      struct tsch_link *backup_link = NULL;
-      static rtimer_clock_t prev_slot_start;
-      static rtimer_clock_t time_to_next_active_slot;
-      uint16_t timeslot_diff = 0;
-      do {
-        current_link = tsch_schedule_get_next_active_link(&tsch_current_asn, &timeslot_diff, &backup_link);
-        if(current_link == NULL) {
-          /* There is no next link. Fall back to default
-            * behavior: wake up at the next slot. */
-          timeslot_diff = 1;
-        } 
-        /* Update ASN */
-        TSCH_ASN_INC(tsch_current_asn, timeslot_diff);
-        /* Time to next wake up */
-        time_to_next_active_slot = timeslot_diff * tsch_timing[tsch_ts_timeslot_length];
-        time_to_next_active_slot += tsch_timesync_adaptive_compensate(time_to_next_active_slot);
-        prev_slot_start = current_asn_start;
-        current_asn_start += time_to_next_active_slot;
-      } while(!tsch_schedule_inc_asn(t, prev_slot_start, time_to_next_active_slot, "disassoc") && !tsch_is_associated);
-    }
-
     process_poll(&tsch_process);
   }
 }
@@ -738,7 +594,6 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
   }
 
   tsch_current_asn = ies.ie_asn;
-  // LOG_INFO("received asn: %02x.%08lx \n", tsch_current_asn.ms1b, tsch_current_asn.ls4b);
   tsch_join_priority = ies.ie_join_priority + 1;
 
 #if TSCH_JOIN_SECURED_ONLY
@@ -859,7 +714,6 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
       frame802154_set_pan_id(frame.src_pid);
 
       /* Synchronize on EB */
-      tsch_current_asn = ies.ie_asn;
       tsch_slot_operation_sync(timestamp - tsch_timing[tsch_ts_tx_offset], &tsch_current_asn);
 
       /* Update global flags */
@@ -899,45 +753,6 @@ tsch_associate(const struct input_packet *input_eb, rtimer_clock_t timestamp)
 }
 /* Processes and protothreads used by TSCH */
 
-static uint8_t
-tsch_calculate_channel(struct tsch_asn_t *asn, uint16_t channel_offset)
-{
-  uint16_t index_of_0, index_of_offset;
-  index_of_0 = TSCH_ASN_MOD(*asn, tsch_hopping_sequence_length);
-  index_of_offset = (index_of_0 + channel_offset) % tsch_hopping_sequence_length.val;
-  return tsch_hopping_sequence[index_of_offset];
-}
-
-// static uint8_t *
-// tsch_calculate_channel_range(struct tsch_asn_t *asn, uint16_t channel_offset)
-// {
-//   uint16_t index_of_0, index_of_offset;
-//   static uint8_t subseq[TSCH_HOPPING_SUBSEQUENCE_LEN];
-//   index_of_0 = TSCH_ASN_MOD(*asn, tsch_hopping_sequence_length);
-//   index_of_offset = (index_of_0 + channel_offset) % tsch_hopping_sequence_length.val;
-//   uint16_t i = 0;
-//   uint16_t cursor;
-//   if(TSCH_HOPPING_SUBSEQUENCE_LEN/2 > index_of_offset) {
-//     cursor = tsch_hopping_sequence_length.val-1-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
-//   } else {
-//     cursor = index_of_offset-TSCH_HOPPING_SUBSEQUENCE_LEN/2;
-//   }
-//   for(i=0; i<TSCH_HOPPING_SUBSEQUENCE_LEN; i++) {
-//     subseq[i] = tsch_hopping_sequence[cursor];
-//     cursor++;
-//     if(cursor == tsch_hopping_sequence_length.val-1) {
-//       cursor = 0;
-//     }
-//   }
-//   return subseq;
-// }
-
-static void 
-tsch_log_asn() {
-  LOG_WARN("current asn: .%08lx\n", tsch_current_asn.ls4b);
-  ctimer_set(&log_asn_timer, 15*CLOCK_SECOND, tsch_log_asn, NULL);
-}
-
 /*---------------------------------------------------------------------------*/
 /* Scanning protothread, called by tsch_process:
  * Listen to different channels, and when receiving an EB,
@@ -952,33 +767,10 @@ PT_THREAD(tsch_scan(struct pt *pt))
   /* Time when we started scanning on current_channel */
   static clock_time_t current_channel_since;
 
-  /* Added variables for asn tracking */
-  static uint8_t scan_channel = 0;
-  // struct tsch_link *backup_link = NULL;
-  // uint16_t timeslot_diff = 0;
+  TSCH_ASN_INIT(tsch_current_asn, 0, 0);
 
-  if(!left_network) {
-    TSCH_ASN_INIT(tsch_current_asn, 0, 0);
-  }
-
-  // static uint8_t *subseq;
-
-  static struct tsch_asn_t tsch_next_asn;
-  TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b);
-  
   etimer_set(&scan_timer, CLOCK_SECOND / TSCH_ASSOCIATION_POLL_FREQUENCY);
   current_channel_since = clock_time();
-
-  static uint16_t next_eb_in;
-
-  unsigned long seconds_since_last_eb = clock_seconds() - last_received_eb;
-  uint16_t minimum_eb_period = (TSCH_EB_PERIOD-TSCH_EB_PERIOD/4) / CLOCK_SECOND;
-  uint16_t maximum_eb_period = TSCH_EB_PERIOD/CLOCK_SECOND;
-  uint16_t average_eb_period = (maximum_eb_period + minimum_eb_period) / 2;
-  next_eb_in = average_eb_period - seconds_since_last_eb % average_eb_period;
-  TSCH_ASN_INC(tsch_next_asn, next_eb_in*TSCH_SLOTS_PER_SECOND);
-
-  LOG_INFO("seconds since last eb: %lu, minimum eb period: %u, next eb in: %u \n", seconds_since_last_eb, minimum_eb_period, next_eb_in);
 
   while(!tsch_is_associated && !tsch_is_coordinator) {
     /* Hop to any channel offset */
@@ -992,43 +784,14 @@ PT_THREAD(tsch_scan(struct pt *pt))
     /* Switch to a (new) channel for scanning */
     if(current_channel == 0 || now_time - current_channel_since > TSCH_CHANNEL_SCAN_DURATION) {
       /* Pick a channel at random in TSCH_JOIN_HOPPING_SEQUENCE */
-
-      next_eb_in--;
-      if(next_eb_in == 0) next_eb_in = average_eb_period;
-      
-      if(left_network && tsch_next_asn.ls4b <= tsch_current_asn.ls4b) {
-        TSCH_ASN_INIT(tsch_next_asn, tsch_current_asn.ms1b, tsch_current_asn.ls4b); 
-
-        TSCH_ASN_INC(tsch_next_asn, next_eb_in*TSCH_SLOTS_PER_SECOND); //single channel -> 14vs11, channel range ->  17vs8
-        
-        //single channel -> 13vs12, channel range -> 17vs8 with timeslot_diff
-        // TSCH_ASN_INC(tsch_next_asn, average_eb_period*TSCH_SLOTS_PER_SECOND-TSCH_SLOTS_PER_SECOND%tsch_hopping_sequence_length.val);
-
-        // tsch_schedule_get_next_active_link(&tsch_next_asn, &timeslot_diff, &backup_link);
-        // TSCH_ASN_INC(tsch_next_asn, timeslot_diff); 
-
-        LOG_INFO("current asn: %02x.%08lx - next asn: %02x.%08lx | sf_length: %u, next_sf: %u\n", tsch_current_asn.ms1b, tsch_current_asn.ls4b, 
-              tsch_next_asn.ms1b, tsch_next_asn.ls4b, tsch_schedule_slotframe_head()->size.val, tsch_schedule_slotframe_head()->next->handle);
-
-        scan_channel = tsch_calculate_channel(&tsch_next_asn, 0); 
-          
-        // subseq = tsch_calculate_channel_range(&tsch_next_asn, 0); 
-        // scan_channel = subseq[random_rand() % TSCH_HOPPING_SUBSEQUENCE_LEN];
-      } 
-      else if(!left_network) {
-        TSCH_ASN_INC(tsch_current_asn, TSCH_SLOTS_PER_SECOND);
-        scan_channel = TSCH_JOIN_HOPPING_SEQUENCE[
-            random_rand() % sizeof(TSCH_JOIN_HOPPING_SEQUENCE)];
-      }
+      uint8_t scan_channel = TSCH_JOIN_HOPPING_SEQUENCE[
+          random_rand() % sizeof(TSCH_JOIN_HOPPING_SEQUENCE)];
 
       NETSTACK_RADIO.set_value(RADIO_PARAM_CHANNEL, scan_channel);
       current_channel = scan_channel;
-      LOG_INFO("scanning on channel %u | next eb in: %u | current asn: %02x.%08lx - changing channel at asn: %02x.%08lx\n", 
-                scan_channel, next_eb_in, tsch_current_asn.ms1b, tsch_current_asn.ls4b, 
-                tsch_next_asn.ms1b, tsch_next_asn.ls4b);
+      LOG_INFO("scanning on channel %u\n", scan_channel);
 
       current_channel_since = now_time;
-
     }
 
     /* Turn radio on and wait for EB */
@@ -1065,7 +828,7 @@ PT_THREAD(tsch_scan(struct pt *pt))
         }
       }
     }
-    
+
     if(tsch_is_associated) {
       /* End of association, turn the radio off */
       NETSTACK_RADIO.off();
@@ -1087,7 +850,6 @@ PROCESS_THREAD(tsch_process, ev, data)
 
   PROCESS_BEGIN();
 
-  ctimer_set(&log_asn_timer, 15*CLOCK_SECOND, tsch_log_asn, NULL);
   while(1) {
 
     while(!tsch_is_associated) {
@@ -1178,7 +940,6 @@ PROCESS_THREAD(tsch_send_eb_process, ev, data)
        * within [tsch_current_eb_period*0.75, tsch_current_eb_period[ */
       delay = (tsch_current_eb_period - tsch_current_eb_period / 4)
         + random_rand() % (tsch_current_eb_period / 4);
-      // delay = tsch_current_eb_period;
     } else {
       delay = TSCH_EB_PERIOD;
     }
@@ -1499,4 +1260,3 @@ const struct mac_driver tschmac_driver = {
 };
 /*---------------------------------------------------------------------------*/
 /** @} */
-

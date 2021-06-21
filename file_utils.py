@@ -1,13 +1,13 @@
 import os
 
-def replace_string_in_file(file, identifying_phrase, new_value):
+def replace_string_in_file(file, identifying_phrase, new_value, split_index, separator=" "):
     new_file_content = ""
 
     reading_file = open(file, "r")
     for line in reading_file:
         replacement_line = line
-        if len(line.split(" ")) == 3 and line.split(" ")[0] == identifying_phrase:
-            replacement_line = line.replace(line.split(" ")[-1], str(new_value))
+        if identifying_phrase in line:
+            replacement_line = line.replace(line.split(separator)[split_index], str(new_value)+'\n')
         new_file_content += replacement_line
     reading_file.close()
 
