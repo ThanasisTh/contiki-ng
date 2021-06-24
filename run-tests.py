@@ -53,9 +53,9 @@ for build_dir in build_dirs:
 
     for schedule in schedules: 
         if schedule == 'orchestra':
-            replace_string_in_file(build_dir + "Makefile", 'MAKE_WITH_ORCHESTRA ?= 0', 1, split_index=-1)
+            replace_string_in_file(build_dir + "Makefile", 'MAKE_WITH_ORCHESTRA ?=', 1, split_index=-1)
         elif schedule == 'minimal':
-            replace_string_in_file(build_dir + "Makefile", 'MAKE_WITH_ORCHESTRA ?= 0', 0, split_index=-1)
+            replace_string_in_file(build_dir + "Makefile", 'MAKE_WITH_ORCHESTRA ?=', 0, split_index=-1)
 
         for wander_duration in out_of_range_duration:
             replace_string_in_file(simulation_file, 'var mobile_node_rejoin', str(wander_duration)+';', split_index=-1, separator=" = ")
@@ -70,6 +70,9 @@ for build_dir in build_dirs:
 
                 for length in seq_lengths:
                     replace_string_in_file(tsch_dir + 'tsch-conf.h', '#define TSCH_DEFAULT_HOPPING_SEQUENCE TSCH_HOPPING', length, split_index=-1)
+                    print('------------------------------------------------------------------------------------------------------------------------')
+                    print('running setup: ' + build_dir.split("/")[-2] + "|" + schedule + "|" + length + "|" + str(wander_duration))
+                    print('------------------------------------------------------------------------------------------------------------------------')
 
                     for seed in seeds:  
                         # if not os.path.isdir(file_dir + "seed:" + str(seed)):
